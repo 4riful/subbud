@@ -5,6 +5,7 @@ import concurrent.futures
 import time
 from datetime import datetime
 import socket
+from tqdm import tqdm
 
 def is_redis_server_running(host, port):
     try:
@@ -72,13 +73,15 @@ class Project:
             future_to_domain = {executor.submit(self.datastore.add_domains, self.name, new_domains): domain for domain in new_domains}
             
             added_domains = []
-            for future in concurrent.futures.as_completed(future_to_domain):
-                domain = future_to_domain[future]
-                try:
-                    future.result()
-                    added_domains.append(domain)
-                except Exception as e:
-                    print(f"❌ Error adding domain '{domain}': {e}")
+            with tqdm(total=len(new_domains), desc="Adding domains", unit=" domain") as pbar:
+                for future in concurrent.futures.as_completed(future_to_domain):
+                    domain = future_to_domain[future]
+                    try:
+                        future.result()
+                        added_domains.append(domain)
+                        pbar.update(1)
+                    except Exception as e:
+                        print(f"❌ Error adding domain '{domain}': {e}")
 
         new_domain_count = len(added_domains)
         total_domain_count = len(domains_to_add)
@@ -88,7 +91,6 @@ class Project:
         print(f"✨ Added {new_domain_count} new domains to '{self.name}' project.")
         print(f"🔍 Duplicates detected: {total_domain_count - new_domain_count}")
         print(f"🔄 Percentage of new domains: {duplicate_percentage:.2f}%")
-
 
     def print_domains(self):
         domains = self.datastore.get_domains(self.name)
