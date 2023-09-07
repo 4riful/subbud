@@ -30,7 +30,7 @@ SubBud offers various operations to manage your subdomains effectively.
 To add subdomains to a project, use the `-o add` operation
 
 ```
-subbud -p project_name -o add -f subdomainsfrom.txt
+subbud -p project_name -o add -f subdomainsfromamass.txt
 ```
 - `-p project_name`: The name of your project.
 - `-o add`: Specifies the operation to add subdomains.
