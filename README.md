@@ -48,7 +48,6 @@ subbud -p project_name -o print
 To list all available projects, use the `-o list` operation:
 ```
 subbud -o list
-
 ```
 - `-o list`: Lists all available projects
 
