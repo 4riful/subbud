@@ -89,12 +89,12 @@ class Project:
 
         new_domain_count = len(new_domains)
         total_domain_count = len(domains_to_add)
-        duplicate_percentage = ((total_domain_count - new_domain_count) / total_domain_count) * 100
+        new_domain_percentage = (new_domain_count / total_domain_count) * 100
 
         print("✅ Domain Addition Complete")
         print(f"✨ Added {new_domain_count} new domains to '{self.name}' project.")
         print(f"🔍 Duplicates detected: {total_domain_count - new_domain_count}")
-        print(f"🔄 Percentage of new domains: {duplicate_percentage:.2f}%")
+        print(f"🔄 Percentage of new domains: {new_domain_percentage:.2f}%")
 
     async def _add_domains_concurrently(self, domains):
         with concurrent.futures.ThreadPoolExecutor() as executor:
