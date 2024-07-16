@@ -2,10 +2,19 @@ import argparse
 import redis
 import os
 import concurrent.futures
-import time
-from datetime import datetime
 import socket
+import logging
+import asyncio
 from tqdm import tqdm
+from datetime import datetime
+from dotenv import load_dotenv
+import ssl
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def is_redis_server_running(host, port):
     try:
@@ -17,11 +26,21 @@ def is_redis_server_running(host, port):
         return False
 
 class DataStore:
-    def __init__(self, host='localhost', port=6379, db=0):
-        if not is_redis_server_running(host, port):
-            print("❌ Redis server is not running. Please start the Redis server.")
-            exit(1)
-        self.r = redis.Redis(host=host, port=port, db=db)
+    def __init__(self, host='localhost', port=6379, db=0, use_ssl=False):
+        self.host = host
+        self.port = port
+        self.db = db
+        self.use_ssl = use_ssl
+        self._connect()
+
+    def _connect(self):
+        if not is_redis_server_running(self.host, self.port):
+            raise ConnectionError("❌ Redis server is not running. Please start the Redis server.")
+        
+        if self.use_ssl:
+            self.r = redis.Redis(host=self.host, port=self.port, db=self.db, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
+        else:
+            self.r = redis.Redis(host=self.host, port=self.port, db=self.db)
 
     def add_domains(self, project, domains):
         pipeline = self.r.pipeline()
@@ -33,9 +52,8 @@ class DataStore:
         return self.r.smembers(project)
 
     def get_projects(self):
-        # Exclude databases starting with an underscore
         all_keys = self.r.keys('*')
-        return [key for key in all_keys if not key.startswith(b'_')]   # Get all keys (project names)
+        return [key for key in all_keys if not key.startswith(b'_')]
 
     def delete_project(self, project):
         return self.r.delete(project)
@@ -45,10 +63,9 @@ class Project:
         self.datastore = datastore
         self.name = name
 
-    def add_domains_from_file(self, filename):
+    async def add_domains_from_file(self, filename):
         if not os.path.exists(filename):
-            print("❌ File does not exist.")
-            return
+            raise FileNotFoundError("❌ File does not exist.")
 
         domains_to_add = []
         with open(filename, 'r') as file:
@@ -58,8 +75,7 @@ class Project:
                     domains_to_add.append(domain)
 
         if not domains_to_add:
-            print("❌ No domains found in the file.")
-            return
+            raise ValueError("❌ No domains found in the file.")
 
         current_domains = self.datastore.get_domains(self.name)
         current_domains = {domain.decode('utf-8') for domain in current_domains}
@@ -69,21 +85,9 @@ class Project:
             print("✅ No new domains found.")
             return
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_domain = {executor.submit(self.datastore.add_domains, self.name, new_domains): domain for domain in new_domains}
-            
-            added_domains = []
-            with tqdm(total=len(new_domains), desc="Adding domains", unit=" domain") as pbar:
-                for future in concurrent.futures.as_completed(future_to_domain):
-                    domain = future_to_domain[future]
-                    try:
-                        future.result()
-                        added_domains.append(domain)
-                        pbar.update(1)
-                    except Exception as e:
-                        print(f"❌ Error adding domain '{domain}': {e}")
+        await self._add_domains_concurrently(new_domains)
 
-        new_domain_count = len(added_domains)
+        new_domain_count = len(new_domains)
         total_domain_count = len(domains_to_add)
         duplicate_percentage = ((total_domain_count - new_domain_count) / total_domain_count) * 100
 
@@ -91,6 +95,16 @@ class Project:
         print(f"✨ Added {new_domain_count} new domains to '{self.name}' project.")
         print(f"🔍 Duplicates detected: {total_domain_count - new_domain_count}")
         print(f"🔄 Percentage of new domains: {duplicate_percentage:.2f}%")
+
+    async def _add_domains_concurrently(self, domains):
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            loop = asyncio.get_event_loop()
+            futures = [
+                loop.run_in_executor(executor, self.datastore.add_domains, self.name, [domain])
+                for domain in domains
+            ]
+            for _ in tqdm(asyncio.as_completed(futures), total=len(futures), desc="Adding domains", unit=" domain"):
+                await _
 
     def print_domains(self):
         domains = self.datastore.get_domains(self.name)
@@ -117,51 +131,58 @@ class Project:
         else:
             print("❌ No domains found for this project.")
 
+def list_projects(datastore):
+    projects = datastore.get_projects()
+    if not projects:
+        print("❌ No projects found.")
+    else:
+        print("📋 Available projects:")
+        for project in projects:
+            print(project.decode('utf-8'))
+
 def main():
     parser = argparse.ArgumentParser(description="Manage bug bounty targets")
     parser.add_argument('-p', '--project', help='The project name')
     parser.add_argument('-f', '--file', help='The file containing domains')
-    parser.add_argument('-o', '--operation', choices=['add', 'print', 'list', 'delete', 'save'], help='Operation to perform')
+    parser.add_argument('-o', '--operation', choices=['add', 'print', 'list', 'delete', 'save'], required=True, help='Operation to perform')
+    parser.add_argument('--host', default=os.getenv('REDIS_HOST', 'localhost'), help='Redis server host')
+    parser.add_argument('--port', type=int, default=os.getenv('REDIS_PORT', 6379), help='Redis server port')
+    parser.add_argument('--db', type=int, default=os.getenv('REDIS_DB', 0), help='Redis database number')
+    parser.add_argument('--ssl', action='store_true', default=os.getenv('REDIS_SSL', 'false').lower() in ['true', '1'], help='Use SSL for Redis connection')
 
     args = parser.parse_args()
 
-    # Check if Redis server is running
-    if args.operation is not None and not is_redis_server_running('localhost', 6379):
-        print("❌ Redis server is not running. Please start the Redis server.")
-        exit(1)
+    if args.operation not in ['list', 'delete'] and not args.project:
+        parser.error("❌ You must provide a project name for this operation.")
 
-    datastore = DataStore()
-
-    if args.operation == 'list':
-        projects = datastore.get_projects()
-        if not projects:
-            print("❌ No projects found.")
-        else:
-            print("📋 Available projects:")
-            for project in projects:
-                print(project.decode('utf-8'))
+    try:
+        datastore = DataStore(host=args.host, port=args.port, db=args.db, use_ssl=args.ssl)
+    except ConnectionError as e:
+        print(e)
         return
 
-    if not args.project and args.operation not in ['list', 'delete']:
-        print("❌ You must provide a project name.")
+    if args.operation == 'list':
+        list_projects(datastore)
         return
 
     project = Project(datastore, args.project)
 
-    if args.operation == 'add':
-        if args.file is None:
-            print("❌ You must provide a file with the 'add' operation.")
-            return
-        project.add_domains_from_file(args.file)
-    elif args.operation == 'print':
-        project.print_domains()
-    elif args.operation == 'delete':
-        if datastore.delete_project(args.project):
-            print(f"✅ Project '{args.project}' deleted.")
-        else:
-            print(f"❌ Project '{args.project}' not found.")
-    elif args.operation == 'save':
-        project.save_printed_domains()
+    try:
+        if args.operation == 'add':
+            if not args.file:
+                parser.error("❌ You must provide a file with the 'add' operation.")
+            asyncio.run(project.add_domains_from_file(args.file))
+        elif args.operation == 'print':
+            project.print_domains()
+        elif args.operation == 'delete':
+            if datastore.delete_project(args.project):
+                print(f"✅ Project '{args.project}' deleted.")
+            else:
+                print(f"❌ Project '{args.project}' not found.")
+        elif args.operation == 'save':
+            project.save_printed_domains()
+    except (FileNotFoundError, ValueError, Exception) as e:
+        logging.error(e)
 
 if __name__ == '__main__':
     main()
