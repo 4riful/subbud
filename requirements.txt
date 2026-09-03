@@ -1,2 +1,4 @@
-redis
-python-dotenv
+redis>=4.2
+python-dotenv>=0.19
+tqdm>=4.60
+textual>=0.40

@@ -5,10 +5,10 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="subbud",
-    version="0.0.2",  # Increment the version number
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="A short description of the package",
+    version="0.1.0",
+    author="4riful",
+    author_email="ariful@thexssrat.com",
+    description="Redis-backed subdomain manager for bug bounty hunters, with a CLI and a TUI",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/4riful/subbud",
@@ -20,11 +20,18 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    packages=find_packages(),
-    python_requires=">=3.6",
+    packages=find_packages(include=["subbud", "subbud.*"]),
+    python_requires=">=3.8",
+    install_requires=[
+        "redis>=4.2",
+        "python-dotenv>=0.19",
+        "tqdm>=4.60",
+        "textual>=0.40",
+    ],
     entry_points={
         'console_scripts': [
             'subbud=subbud.main:main',
+            'subbud-tui=subbud.tui:main',
         ],
     },
 )
